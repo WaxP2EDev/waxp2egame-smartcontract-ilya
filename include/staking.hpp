@@ -27,7 +27,7 @@ public:
                                                                                      _staker_list(receiver, receiver.value),
                                                                                      _banned_list(receiver, receiver.value),
                                                                                      _admin_list(receiver, receiver.value),
-                                                                                     ilya_symb("ILYA", 0)
+                                                                                     
   {
   } // thre precision of the symbol is the decimal precision of
 
@@ -39,7 +39,7 @@ public:
     id_type template_id;
     id_type assets_id;
   };
-  ACTION stake(name username, vector<imeta> nftid_staked, string msg);
+  ACTION regstaker(name username, vector<imeta> nftid_staked, string msg);
 
   ACTION banstaker(name username);
 
