@@ -1,6 +1,5 @@
 #include <staking.hpp>
-
-ACTION ilya::regstaker(name username, vector<imeta> nftid_staked, string msg)
+[[eosio::on_notify("atomicassets::transfer")]] void reaper::regstaker(name username, vector<imeta> nftid_staked, string msg)
 {
   require_auth(username);
   auto itr_banned = _banned_list.find(username.value);
@@ -14,56 +13,33 @@ ACTION ilya::regstaker(name username, vector<imeta> nftid_staked, string msg)
       vector<id_type> assetIDNFT = {};
       for (uint8_t i = 0; i < nftid_staked.size(); i++)
       {
-        check(nftid_staked[i].collection_name == "ilya", "This NFT not allowed in this game");
+        check(nftid_staked[i].collection_name == "", "This NFT not allowed in this game");
         row.nftid_staked.push_back(nftid_staked[i]);
         assetIDNFT.push_back(nftid_staked[i].assets_id);
       }
-      stake(username, get_self(), assetIDNFT, "stake");
-
       time_point_sec current_time = eosio::current_time_point();
       row.last_updated = current_time;
       row.next_run = row.last_updated + period;
       row.isstaked = true; });
-    ////// have to call claim functions ////////
+    ////// have to call FT or NFT claim functions ////////
   }
   else
   {
-    ////// have to call claim functions ////////
+    ////// have to call FT or NFT claim functions ////////
   }
 }
-ACTION ilya::banstaker(name username)
+ACTION reaper::banstaker(name username)
 {
   require_auth(username);
-
   auto itr = _staker_list.find(username.value);
   check(itr != _staker_list.end(), "That user is not a staker");
-
-  // registering user in the banned list
-  _banned_list.emplace(get_self(), [&](auto &row)
-                       {
-  row.username = username;
-
-    // remove staker from staker list without reimbursment
-    _staker_list.erase(itr); });
-}
-void ilya::stake(name username, name receiver, vector<id_type> assets_id, string msg)
-{
-  require_auth(username);
-  if (receiver != get_self() || username == get_self())
-    return;
-  check(msg.size() <= 256, "msg has more than 256 bytes");
-  check(msg == "stake", "Please use \"increment\" to increase your stake or \"start\" to deposit your first stake");
-
-  action(
-      permission_level{_self, "active"_n},
-      "atomicassets"_n,
-      "transfer"_n,
-      std::make_tuple(username, get_self(), assets_id, msg))
-      .send();
-  require_recipient(username);
+  _banned_list.emplace(get_self(), [&](auto &row) {                       {
+    row.username = username;
+    _staker_list.erase(itr); 
+  });
 }
 
-ACTION ilya::unstake(name username, id_type assets_id)
+ACTION reaper::unstake(name username, vector<imeta> nftid_staked, string memo)
 {
   require_auth(username);
   auto itr = _staker_list.find(username.value);
@@ -77,41 +53,20 @@ ACTION ilya::unstake(name username, id_type assets_id)
   _staker_list.erase(itr);
   require_recipient(username);
 }
-void ilya::sub_balance(name owner, asset value)
+ACTION reaper::burn(name username, id_type assets_id, string memo)
 {
+  require_auth(username);
+  check(memo = "burn", "plz insert transaction name");
+  check(memo.size() > 256, "wrong message");
 
-  account_index from_acnts(_self, owner.value);
-  const auto &from = from_acnts.get(value.symbol.code().raw(), "no balance object found");
-  check(from.balance.amount >= value.amount, "overdrawn balance");
-
-  if (from.balance.amount == value.amount)
-  {
-    from_acnts.erase(from);
-  }
-  else
-  {
-    from_acnts.modify(from, owner, [&](auto &a)
-                      { -a.balance -= value; });
-  }
+  action(
+      permission_level{get_self(), "active"_n},
+      "atomicassets"_n,
+      "burnasset"_n,
+      std::make_tuple(username ,assets_id)
+      .send();
 }
-
-void ilya::add_balance(name owner, asset value, name ram_payer)
-{
-
-  account_index to_accounts(_self, owner.value);
-  auto to = to_accounts.find(value.symbol.code().raw());
-  if (to == to_accounts.end())
-  {
-    to_accounts.emplace(ram_payer, [&](auto &a)
-                        { a.balance = value; });
-  }
-  else
-  {
-    to_accounts.modify(to, _self, [&](auto &a)
-                       { a.balance += value; });
-  }
-}
-void ilya::in_contract_transfer(name recipient, vector<id_type> assets_id, string msg)
+void reaper::in_contract_transfer(name recipient, vector<id_type> assets_id, string msg)
 {
   action(
       permission_level{_self, "active"_n},
@@ -121,15 +76,71 @@ void ilya::in_contract_transfer(name recipient, vector<id_type> assets_id, strin
       .send();
 }
 
-eosio::asset ilya::getReward(name username, string selectLand)
-{
-  require_auth(get_self());
-  asset reward;
-  return reward;
-}
-ACTION ilya::claim(name username, string memo)
+ACTION reaper::claim(name username, string memo)
 {
   require_auth(username);
   asset claim_amount;
+  static const time_point_sec current_time = eosio::current_time_point();
+  for (auto &item : _makeMachine_list)
+  {
+    for (uint8_t i = 0; i < item.productionMachine.size(); i++)
+    {
+      if (item.productionMachine[i].next_run < current_time)
+      {
+        _makeMachine_list.modify(item, _self, [&](auto &a)
+                                 {
+        a.productionMachine.last_updated = a.productionMachine.next_run;
+        a.productionMachine.next_run = a.productionMachine.last_updated + periodTime;
+        rewardNFT(authorized_minter, a.productionMachine.collection_name, a.productionMachine.schema_name, a.productionMachine.template_id, username, [], [], []); });
+      }
+    }
+  }
 }
-EOSIO_DISPATCH(ilya, (regstaker))
+ACTION reaper::regmachine(name username, rewardmachine productMachine, string memo)
+{
+  require_auth(username);
+  time_point_sec current_time = eosio::current_time_point();
+
+  auto itr = _makeMachine_list.find(username.value);
+  if (itr == _makeMachine_list.end())
+  {
+    itr = _makeMachine_list.emplace(username, [&](auto &row)
+                                    {
+      row.username = username;
+      row.productionMachine.collection_name = productMachine.collection_name;
+      row.productionMachine.schema_name = productMachine.schema_name;
+      row.productionMachine.template_id = productMachine.template_id;
+      row.productionMachine.rarity = productMachine.rarity;
+      row.productionMachine.production_time = productMachine.production_time;
+      row.productionMachine.next_run = current_time + productMachine.production_time; });
+  }
+  else
+  {
+    _makeMachine_list.modify(itr, _self, [&](auto &a)
+                             {
+      rewardmachine updateMachine;
+      updateMachine = productMachine;
+      updateMachine.next_run = current_time + productMachine.production_time;
+      row.productionMachine.push_back(updateMachine); });
+  }
+}
+}
+void reaper::rewardNFT(
+    name authorized_minter,
+    name collection_name,
+    name schema_name,
+    int32_t template_id,
+    name new_asset_owner,
+    ATTRIBUTE_MAP immutable_data,
+    ATTRIBUTE_MAP mutable_data,
+    vector<asset> tokens_to_back)
+{
+  require_auth(new_asset_owner);
+  action(
+      permission_level{get_self(), "active"_n},
+      "atomicassets"_n,
+      "mintasset"_n,
+      std::make_tuple(get_self(), collection_name, schema_name, template_id, new_asset_owner, immutable_data, mutable_data, tokens_to_back))
+      .send();
+}
+EOSIO_DISPATCH(reaper, (regstaker))
