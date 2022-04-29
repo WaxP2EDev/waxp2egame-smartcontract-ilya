@@ -1,22 +1,27 @@
-#include <staking.hpp>
-[[eosio::on_notify("atomicassets::transfer")]] void reaper::regstaker(name username, vector<imeta> nftid_staked, string msg)
+#include <reaper.hpp>
+[[eosio::on_notify("atomicassets::transfer")]] void reaper::regstaker(name from,
+     name to,
+     vector<uint64_t> asset_ids,
+     string memo)
+
 {
-  require_auth(username);
-  auto itr_banned = _banned_list.find(username.value);
+  require_auth(from);
+  auto itr_banned = _banned_list.find(from.value);
   check(itr_banned == _banned_list.end(), "You where banned, please see your administrator");
-  auto itr = _staker_list.find(username.value);
+  auto itr = _staker_list.find(from.value);
   if (itr == _staker_list.end())
   {
-    itr = _staker_list.emplace(username, [&](auto &row)
+    itr = _staker_list.emplace(from, [&](auto &row)
                                {
-      row.username = username;
-      vector<id_type> assetIDNFT = {};
-      for (uint8_t i = 0; i < nftid_staked.size(); i++)
+      row.username = from;
+      // vector<id_type> assetIDNFT = {};
+      for (uint8_t i = 0; i < asset_ids.size(); i++)
       {
-        check(nftid_staked[i].collection_name == "", "This NFT not allowed in this game");
-        row.nftid_staked.push_back(nftid_staked[i]);
-        assetIDNFT.push_back(nftid_staked[i].assets_id);
+        // check(nftid_staked[i].collection_name == "", "This NFT not allowed in this game");
+        row.nftid_staked.push_back(asset_ids[i]);
+        // assetIDNFT.push_back(nftid_staked[i].assets_id);
       }
+      // row.nftid_staked = asset_ids;
       time_point_sec current_time = eosio::current_time_point();
       row.last_updated = current_time;
       row.next_run = row.last_updated + period;
@@ -33,13 +38,13 @@ ACTION reaper::banstaker(name username)
   require_auth(username);
   auto itr = _staker_list.find(username.value);
   check(itr != _staker_list.end(), "That user is not a staker");
-  _banned_list.emplace(get_self(), [&](auto &row) {                       {
+  _banned_list.emplace(get_self(), [&](auto &row){
     row.username = username;
-    _staker_list.erase(itr); 
+      _staker_list.erase(itr);
   });
 }
 
-ACTION reaper::unstake(name username, vector<imeta> nftid_staked, string memo)
+ACTION reaper::unstake(name username, string memo)
 {
   require_auth(username);
   auto itr = _staker_list.find(username.value);
@@ -47,7 +52,7 @@ ACTION reaper::unstake(name username, vector<imeta> nftid_staked, string memo)
   vector<id_type> total_NFTs = {};
   for (uint8_t i = 0; i < itr->nftid_staked.size(); i++)
   {
-    total_NFTs.push_back(itr->nftid_staked[i].assets_id);
+    total_NFTs.push_back(itr->nftid_staked[i]);
   }
   in_contract_transfer(username, total_NFTs, string("Your NFT_staked have been unstaked"));
   _staker_list.erase(itr);
@@ -56,14 +61,14 @@ ACTION reaper::unstake(name username, vector<imeta> nftid_staked, string memo)
 ACTION reaper::burn(name username, id_type assets_id, string memo)
 {
   require_auth(username);
-  check(memo = "burn", "plz insert transaction name");
+  check(memo == "burn", "plz insert transaction name");
   check(memo.size() > 256, "wrong message");
 
   action(
       permission_level{get_self(), "active"_n},
       "atomicassets"_n,
       "burnasset"_n,
-      std::make_tuple(username ,assets_id)
+      std::make_tuple(username ,assets_id))
       .send();
 }
 void reaper::in_contract_transfer(name recipient, vector<id_type> assets_id, string msg)
@@ -89,9 +94,13 @@ ACTION reaper::claim(name username, string memo)
       {
         _makeMachine_list.modify(item, _self, [&](auto &a)
                                  {
-        a.productionMachine.last_updated = a.productionMachine.next_run;
-        a.productionMachine.next_run = a.productionMachine.last_updated + periodTime;
-        rewardNFT(authorized_minter, a.productionMachine.collection_name, a.productionMachine.schema_name, a.productionMachine.template_id, username, [], [], []); });
+        a.productionMachine[i].last_updated = a.productionMachine[i].next_run;
+        a.productionMachine[i].next_run = a.productionMachine[i].last_updated + a.productionMachine[i].periodTime;
+        ATTRIBUTE_MAP immutable_data = {};
+        ATTRIBUTE_MAP mutable_data = {};
+        vector<asset> tokens_to_back = {};
+        rewardNFT(name("authorized_minter"), a.productionMachine[i].collection_name, a.productionMachine[i].schema_name, a.productionMachine[i].template_id, username, immutable_data, mutable_data, tokens_to_back);
+                                 });
       }
     }
   }
@@ -107,12 +116,10 @@ ACTION reaper::regmachine(name username, rewardmachine productMachine, string me
     itr = _makeMachine_list.emplace(username, [&](auto &row)
                                     {
       row.username = username;
-      row.productionMachine.collection_name = productMachine.collection_name;
-      row.productionMachine.schema_name = productMachine.schema_name;
-      row.productionMachine.template_id = productMachine.template_id;
-      row.productionMachine.rarity = productMachine.rarity;
-      row.productionMachine.production_time = productMachine.production_time;
-      row.productionMachine.next_run = current_time + productMachine.production_time; });
+      rewardmachine updateMachine;
+      updateMachine = productMachine;
+      updateMachine.next_run = current_time + productMachine.production_time;
+      row.productionMachine.push_back(updateMachine); });
   }
   else
   {
@@ -121,9 +128,9 @@ ACTION reaper::regmachine(name username, rewardmachine productMachine, string me
       rewardmachine updateMachine;
       updateMachine = productMachine;
       updateMachine.next_run = current_time + productMachine.production_time;
-      row.productionMachine.push_back(updateMachine); });
+      a.productionMachine.push_back(updateMachine);
+      });
   }
-}
 }
 void reaper::rewardNFT(
     name authorized_minter,

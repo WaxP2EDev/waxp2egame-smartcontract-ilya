@@ -59,7 +59,10 @@ public:
     uint64_t periodTime;
   };
 
-  ACTION regstaker(name username, vector<imeta> nftid_staked, string msg);
+  [[eosio::on_notify("atomicassets::transfer")]] void reaper::regstaker(name from,
+     name to,
+     vector<uint64_t> asset_ids,
+     string memo);
 
   ACTION banstaker(name username);
 
